@@ -5,16 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>桌面日历小部件</title>
   <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div class="widget-container">
+  <div class="widget-container" id="widgetContainer">
     <!-- 拖拽区域 -->
     <div class="drag-region">
+      <span class="drag-hint">⋮⋮ 拖拽移动</span>
       <button class="close-btn" id="closeBtn" title="关闭">×</button>
     </div>
 
     <!-- 日历主体 -->
     <div class="calendar-section">
+      <div class="decorative-leaves left">🍃</div>
+      <div class="decorative-leaves right">🌿</div>
       <div class="date-display">
         <div class="date-number" id="dateNumber">23</div>
         <div class="date-info">
@@ -23,38 +27,46 @@
         </div>
       </div>
       <div class="lunar-date" id="lunarDate">农历五月十八</div>
+      <div class="season-hint" id="seasonHint">☀️ 夏日蝉鸣</div>
     </div>
 
     <!-- 每日任务 -->
     <div class="tasks-section">
       <div class="section-header">
         <span class="section-title">✨ 今日任务</span>
-        <button class="add-btn" id="addTaskBtn">+</button>
+        <button class="add-btn" id="addTaskBtn" title="添加任务">+</button>
       </div>
-      <div class="task-list" id="taskList"></div>
+      <div class="task-list" id="taskList">
+        <div class="empty-state">还没有任务，点击 + 添加</div>
+      </div>
     </div>
 
     <!-- 倒计时 -->
     <div class="countdown-section">
       <div class="section-header">
         <span class="section-title">⏰ 倒计时</span>
-        <button class="add-btn" id="addCountdownBtn">+</button>
+        <button class="add-btn" id="addCountdownBtn" title="添加倒计时">+</button>
       </div>
-      <div class="countdown-list" id="countdownList"></div>
+      <div class="countdown-list" id="countdownList">
+        <div class="empty-state">还没有倒计时，点击 + 添加</div>
+      </div>
     </div>
+
+    <!-- 底部装饰 -->
+    <div class="footer-decor">━━━ 宫崎骏的夏天 ━━━</div>
   </div>
 
   <!-- 添加任务弹窗 -->
   <div class="modal" id="taskModal">
     <div class="modal-content">
       <div class="modal-header">
-        <span>添加任务</span>
-        <button class="modal-close" onclick="closeTaskModal()">×</button>
+        <span>✨ 添加任务</span>
+        <button class="modal-close" id="closeTaskModal">×</button>
       </div>
       <input type="text" class="modal-input" id="taskInput" placeholder="输入今日任务..." maxlength="50">
       <div class="modal-actions">
-        <button class="modal-btn cancel" onclick="closeTaskModal()">取消</button>
-        <button class="modal-btn confirm" onclick="confirmAddTask()">添加</button>
+        <button class="modal-btn cancel" id="cancelTaskBtn">取消</button>
+        <button class="modal-btn confirm" id="confirmTaskBtn">添加</button>
       </div>
     </div>
   </div>
@@ -63,14 +75,14 @@
   <div class="modal" id="countdownModal">
     <div class="modal-content">
       <div class="modal-header">
-        <span>添加倒计时</span>
-        <button class="modal-close" onclick="closeCountdownModal()">×</button>
+        <span>⏰ 添加倒计时</span>
+        <button class="modal-close" id="closeCountdownModal">×</button>
       </div>
       <input type="text" class="modal-input" id="countdownNameInput" placeholder="事件名称 (如: 中考)" maxlength="20">
       <input type="date" class="modal-input" id="countdownDateInput">
       <div class="modal-actions">
-        <button class="modal-btn cancel" onclick="closeCountdownModal()">取消</button>
-        <button class="modal-btn confirm" onclick="confirmAddCountdown()">添加</button>
+        <button class="modal-btn cancel" id="cancelCountdownBtn">取消</button>
+        <button class="modal-btn confirm" id="confirmCountdownBtn">添加</button>
       </div>
     </div>
   </div>

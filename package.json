@@ -1,0 +1,16 @@
+{
+  "name": "desktop-calendar-widget",
+  "version": "1.0.0",
+  "description": "宫崎骏风格桌面日历小部件 - 每日任务与倒计时",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "keywords": ["electron", "desktop", "widget", "calendar"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0"
+  }
+}

@@ -1,18 +1,27 @@
 #pragma once
-
 #ifndef UNICODE
 #define UNICODE
 #define _UNICODE
 #endif
-
 #include <windows.h>
 #include <string>
 #include <vector>
+
+enum class RepeatType {
+    None = 0,
+    Daily = 1,
+    Weekdays = 2,
+    Weekends = 3,
+    Custom = 4
+};
 
 struct Task {
     int id;
     std::wstring text;
     bool completed;
+    RepeatType repeatType;
+    int customWeekdays; 
+    std::wstring lastCompletedDate;
 };
 
 struct Countdown {
@@ -26,8 +35,10 @@ struct ThemeColors {
     COLORREF bgSecondary;
     COLORREF accent;
     COLORREF accentDark;
+    COLORREF accentLight;
     COLORREF textPrimary;
     COLORREF textSecondary;
+    COLORREF border;
     std::wstring seasonText;
 };
 
@@ -35,7 +46,6 @@ class CalendarWindow {
 public:
     CalendarWindow();
     ~CalendarWindow();
-
     bool Create(HINSTANCE hInstance);
     void Show(int nCmdShow);
 
@@ -65,29 +75,30 @@ private:
 
     int CalculateDaysLeft(const std::wstring& targetDate);
     std::wstring GetWeekdayName();
+    std::wstring GetTodayStr();
+    bool IsTaskVisibleToday(const Task& t);
+    std::wstring GetRepeatText(const Task& t);
 
-    void AddTask(const std::wstring& text);
+    void AddTask(const std::wstring& text, RepeatType rt, int customDays);
     void ToggleTask(int id);
+    void DeleteTask(int id);
 
     void AddCountdown(const std::wstring& name, const std::wstring& targetDate);
+    void DeleteCountdown(int id);
 
-    bool ShowInputDialog(const wchar_t* title, const wchar_t* prompt, std::wstring& result);
-    bool ShowAddCountdownDialog(std::wstring& name, std::wstring& date);
+    bool ShowAddTaskDialog();
+    bool ShowAddCountdownDialog();
 
     HWND hwnd_;
     HINSTANCE hInstance_;
-
     bool isDragging_;
     POINT dragOffset_;
-
     bool isCollapsed_;
-
     std::vector<Task> tasks_;
     std::vector<Countdown> countdowns_;
-
     int themeIndex_;
 
-    static const int WINDOW_WIDTH = 340;
-    static const int WINDOW_HEIGHT_EXPANDED = 560;
-    static const int WINDOW_HEIGHT_COLLAPSED = 130;
+    static const int WINDOW_WIDTH = 360;
+    static const int WINDOW_HEIGHT_EXPANDED = 600;
+    static const int WINDOW_HEIGHT_COLLAPSED = 140;
 };

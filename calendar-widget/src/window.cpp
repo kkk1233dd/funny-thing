@@ -1,126 +1,268 @@
 #include "window.h"
-#include "themes.h"
-#include "utils.h"
 #include <fstream>
-#include <sstream>
 #include <algorithm>
 #include <time.h>
 
-#define ID_ADD_TASK 1001
-#define ID_ADD_COUNTDOWN 1002
-#define ID_TOGGLE_TASK 1003
-#define ID_DELETE_TASK 1004
-#define ID_DELETE_COUNTDOWN 1005
-#define ID_TOGGLE_COLLAPSE 1006
-#define ID_NEXT_THEME 1007
-#define ID_EXIT 1008
+ThemeColors g_themes[4];
 
-DesktopCalendarWindow::DesktopCalendarWindow()
+void InitThemes() {
+    // 春 - 樱落时节
+    g_themes[0].bgPrimary = RGB(245, 250, 245);
+    g_themes[0].bgSecondary = RGB(225, 240, 225);
+    g_themes[0].accent = RGB(152, 210, 152);
+    g_themes[0].accentDark = RGB(107, 172, 107);
+    g_themes[0].textPrimary = RGB(46, 125, 50);
+    g_themes[0].textSecondary = RGB(85, 139, 47);
+    g_themes[0].seasonText = L"樱落时节";
+
+    // 夏 - 蝉鸣之夏
+    g_themes[1].bgPrimary = RGB(232, 245, 233);
+    g_themes[1].bgSecondary = RGB(200, 230, 201);
+    g_themes[1].accent = RGB(129, 199, 132);
+    g_themes[1].accentDark = RGB(102, 187, 106);
+    g_themes[1].textPrimary = RGB(46, 125, 50);
+    g_themes[1].textSecondary = RGB(85, 139, 47);
+    g_themes[1].seasonText = L"蝉鸣之夏";
+
+    // 秋 - 枫红秋意
+    g_themes[2].bgPrimary = RGB(255, 243, 224);
+    g_themes[2].bgSecondary = RGB(255, 224, 178);
+    g_themes[2].accent = RGB(255, 167, 38);
+    g_themes[2].accentDark = RGB(255, 143, 0);
+    g_themes[2].textPrimary = RGB(191, 93, 0);
+    g_themes[2].textSecondary = RGB(230, 109, 0);
+    g_themes[2].seasonText = L"枫红秋意";
+
+    // 冬 - 雪落冬安
+    g_themes[3].bgPrimary = RGB(227, 242, 253);
+    g_themes[3].bgSecondary = RGB(187, 222, 251);
+    g_themes[3].accent = RGB(100, 181, 246);
+    g_themes[3].accentDark = RGB(66, 165, 245);
+    g_themes[3].textPrimary = RGB(25, 118, 210);
+    g_themes[3].textSecondary = RGB(57, 139, 247);
+    g_themes[3].seasonText = L"雪落冬安";
+}
+
+ThemeColors& CurrentTheme() {
+    return g_themes[0];
+}
+
+CalendarWindow::CalendarWindow()
     : hwnd_(NULL)
     , hInstance_(NULL)
     , isDragging_(false)
     , isCollapsed_(false)
     , themeIndex_(1)
-    , hoverItemId_(-1)
-    , isTaskHover_(true)
 {
-    currentTheme_ = themes::GetThemeByIndex(themeIndex_);
+    InitThemes();
 }
 
-DesktopCalendarWindow::~DesktopCalendarWindow() {
-    if (hwnd_) {
-        DestroyWindow(hwnd_);
+CalendarWindow::~CalendarWindow() {
+    if (hwnd_) DestroyWindow(hwnd_);
+}
+
+static CalendarWindow* g_window = NULL;
+
+static LRESULT CALLBACK InputDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+        case WM_INITDIALOG: {
+            std::wstring* prompt = (std::wstring*)lParam;
+            SetDlgItemText(hDlg, 100, prompt->c_str());
+            SendDlgItemMessage(hDlg, 101, EM_SETLIMITTEXT, 255, 0);
+            SetFocus(GetDlgItem(hDlg, 101));
+            return FALSE;
+        }
+        case WM_COMMAND:
+            if (LOWORD(wParam) == IDOK) {
+                EndDialog(hDlg, IDOK);
+                return TRUE;
+            }
+            if (LOWORD(wParam) == IDCANCEL) {
+                EndDialog(hDlg, IDCANCEL);
+                return TRUE;
+            }
+            break;
+        case WM_CLOSE:
+            EndDialog(hDlg, IDCANCEL);
+            return TRUE;
     }
+    return FALSE;
 }
 
-bool DesktopCalendarWindow::Create(HINSTANCE hInstance) {
-    hInstance_ = hInstance;
+bool CalendarWindow::ShowInputDialog(const wchar_t* title, const wchar_t* prompt, std::wstring& result) {
+    std::wstring promptStr = prompt;
 
-    WNDCLASSW wc = {0};
-    wc.lpfnWndProc = WndProcStatic;
-    wc.hInstance = hInstance;
-    wc.lpszClassName = L"DesktopCalendarWidget";
-    wc.hbrBackground = (HBRUSH)GetStockObject(NULL_BRUSH);
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    RegisterClassW(&wc);
+    HWND hDlg = CreateDialogParam(hInstance_, MAKEINTRESOURCE(0), hwnd_, InputDlgProc, (LPARAM)&promptStr);
+    if (!hDlg) {
+        wchar_t buf[256] = {0};
+        wcscpy_s(buf, result.c_str());
+        if (IDOK == MessageBox(hwnd_, prompt, title, MB_OKCANCEL | MB_ICONQUESTION)) {
+            return true;
+        }
+        return false;
+    }
 
-    int height = isCollapsed_ ? WINDOW_HEIGHT_COLLAPSED : WINDOW_HEIGHT_EXPANDED;
+    SetWindowText(hDlg, title);
 
-    hwnd_ = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        L"DesktopCalendarWidget",
-        L"桌面日历",
-        WS_POPUP | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT,
-        WINDOW_WIDTH, height,
-        NULL, NULL, hInstance, this
-    );
+    RECT rc;
+    GetWindowRect(hwnd_, &rc);
+    int dlgW = 300, dlgH = 140;
+    int x = rc.left + (WINDOW_WIDTH - dlgW) / 2;
+    int y = rc.top + 100;
+    SetWindowPos(hDlg, NULL, x, y, dlgW, dlgH, SWP_NOZORDER);
 
-    if (!hwnd_) return false;
+    HDC hdc = GetDC(hDlg);
 
-    SetLayeredWindowAttributes(hwnd_, 0, currentTheme_.alpha, LWA_ALPHA);
+    RECT textRect = {20, 15, 260, 35};
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, RGB(0,0,0));
+    DrawText(hdc, prompt, -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-    MARGINS margins = {-1};
-    DwmExtendFrameIntoClientArea(hwnd_, &margins);
+    HWND hEdit = CreateWindow(L"EDIT", result.c_str(),
+        WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+        20, 45, 260, 28, hDlg, (HMENU)101, hInstance_, NULL);
 
-    LoadData();
-    UpdateSeason();
+    CreateWindow(L"BUTTON", L"确定",
+        WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+        110, 82, 70, 28, hDlg, (HMENU)IDOK, hInstance_, NULL);
 
-    return true;
+    CreateWindow(L"BUTTON", L"取消",
+        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        200, 82, 70, 28, hDlg, (HMENU)IDCANCEL, hInstance_, NULL);
+
+    ReleaseDC(hDlg, hdc);
+
+    ShowWindow(hDlg, SW_SHOW);
+    SetFocus(hEdit);
+
+    MSG msg;
+    BOOL ret;
+    bool ok = false;
+    while ((ret = GetMessage(&msg, NULL, 0, 0)) != 0) {
+        if (ret == -1) break;
+        if (!IsDialogMessage(hDlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+        if (!IsWindow(hDlg)) break;
+    }
+
+    if (IsWindow(hDlg)) {
+        wchar_t buf[256] = {0};
+        GetWindowText(GetDlgItem(hDlg, 101), buf, 256);
+        result = buf;
+        DestroyWindow(hDlg);
+        ok = true;
+    }
+
+    return ok;
 }
 
-void DesktopCalendarWindow::Show(int nCmdShow) {
-    ShowWindow(hwnd_, nCmdShow);
-    UpdateWindow(hwnd_);
+bool CalendarWindow::ShowAddCountdownDialog(std::wstring& name, std::wstring& date) {
+    std::wstring nameResult = name;
+    std::wstring dateResult = date;
+
+    HWND hDlg = CreateWindow(L"#32770", L"添加倒计时",
+        WS_DLGFRAME | WS_SYSMENU | DS_MODALFRAME,
+        0, 0, 300, 180, hwnd_, NULL, hInstance_, NULL);
+
+    RECT rc;
+    GetWindowRect(hwnd_, &rc);
+    int dlgW = 300, dlgH = 180;
+    int x = rc.left + (WINDOW_WIDTH - dlgW) / 2;
+    int y = rc.top + 80;
+    SetWindowPos(hDlg, HWND_TOPMOST, x, y, dlgW, dlgH, SWP_SHOWWINDOW);
+
+    HDC hdc = GetDC(hDlg);
+    RECT r1 = {20, 12, 260, 32};
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, RGB(0,0,0));
+    DrawText(hdc, L"事件名称：", -1, &r1, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    RECT r2 = {20, 62, 260, 82};
+    DrawText(hdc, L"目标日期：", -1, &r2, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    ReleaseDC(hDlg, hdc);
+
+    HWND hName = CreateWindow(L"EDIT", nameResult.c_str(),
+        WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+        20, 32, 260, 28, hDlg, (HMENU)101, hInstance_, NULL);
+
+    HWND hDate = CreateWindow(L"EDIT", dateResult.c_str(),
+        WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+        20, 82, 260, 28, hDlg, (HMENU)102, hInstance_, NULL);
+
+    CreateWindow(L"BUTTON", L"确定",
+        WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+        110, 122, 70, 28, hDlg, (HMENU)IDOK, hInstance_, NULL);
+
+    CreateWindow(L"BUTTON", L"取消",
+        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        200, 122, 70, 28, hDlg, (HMENU)IDCANCEL, hInstance_, NULL);
+
+    SetFocus(hName);
+
+    MSG msg;
+    BOOL ret;
+    bool ok = false;
+    while ((ret = GetMessage(&msg, NULL, 0, 0)) != 0) {
+        if (ret == -1) break;
+        if (msg.hwnd == hDlg || IsChild(hDlg, msg.hwnd)) {
+            if (msg.message == WM_COMMAND) {
+                if (LOWORD(msg.wParam) == IDOK) {
+                    wchar_t nbuf[128] = {0}, dbuf[64] = {0};
+                    GetWindowText(hName, nbuf, 128);
+                    GetWindowText(hDate, dbuf, 64);
+                    name = nbuf;
+                    date = dbuf;
+                    ok = true;
+                    break;
+                }
+                if (LOWORD(msg.wParam) == IDCANCEL) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (msg.message == WM_CLOSE) {
+                ok = false;
+                break;
+            }
+        }
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    DestroyWindow(hDlg);
+    return ok && !name.empty() && !date.empty();
 }
 
-LRESULT CALLBACK DesktopCalendarWindow::WndProcStatic(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    DesktopCalendarWindow* pThis = NULL;
-
+LRESULT CALLBACK CalendarWindow::WndProcStatic(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_NCCREATE) {
         CREATESTRUCT* cs = (CREATESTRUCT*)lParam;
-        pThis = (DesktopCalendarWindow*)cs->lpCreateParams;
-        SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pThis);
-        pThis->hwnd_ = hwnd;
-    } else {
-        pThis = (DesktopCalendarWindow*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+        g_window = (CalendarWindow*)cs->lpCreateParams;
+        g_window->hwnd_ = hwnd;
+        SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)g_window);
     }
 
-    if (pThis) {
-        return pThis->WndProc(msg, wParam, lParam);
-    }
-
+    CalendarWindow* p = (CalendarWindow*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    if (p) return p->WndProc(msg, wParam, lParam);
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-LRESULT DesktopCalendarWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CalendarWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd_, &ps);
-            OnPaint(hdc);
-            EndPaint(hwnd_, &ps);
+        case WM_PAINT:
+            OnPaint();
             return 0;
-        }
 
         case WM_ERASEBKGND:
             return 1;
 
-        case WM_LBUTTONDOWN: {
-            int x = LOWORD(lParam);
-            int y = HIWORD(lParam);
-
-            if (x >= 8 && x <= 32 && y >= 12 && y <= 36) {
-                ToggleCollapse();
-                return 0;
-            }
-
-            OnLButtonDown(x, y);
+        case WM_LBUTTONDOWN:
+            OnLButtonDown(LOWORD(lParam), HIWORD(lParam));
             return 0;
-        }
 
         case WM_LBUTTONUP:
-            OnLButtonUp(LOWORD(lParam), HIWORD(lParam));
+            OnLButtonUp();
             return 0;
 
         case WM_MOUSEMOVE:
@@ -131,39 +273,114 @@ LRESULT DesktopCalendarWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
             OnRButtonUp(LOWORD(lParam), HIWORD(lParam));
             return 0;
 
-        case WM_COMMAND:
-            OnCommand(LOWORD(wParam), (HWND)lParam, HIWORD(wParam));
-            return 0;
-
-        case WM_TIMER:
-            InvalidateRect(hwnd_, NULL, FALSE);
-            return 0;
-
         case WM_DESTROY:
             SaveData();
             PostQuitMessage(0);
             return 0;
-
-        default:
-            return DefWindowProc(hwnd_, msg, wParam, lParam);
     }
+    return DefWindowProc(hwnd_, msg, wParam, lParam);
 }
 
-void DesktopCalendarWindow::OnPaint(HDC hdc) {
+bool CalendarWindow::Create(HINSTANCE hInstance) {
+    hInstance_ = hInstance;
+
+    WNDCLASSW wc = {0};
+    wc.lpfnWndProc = WndProcStatic;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = L"DesktopCalendar2024";
+    wc.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+
+    if (!RegisterClassW(&wc)) {
+        return false;
+    }
+
+    int height = isCollapsed_ ? WINDOW_HEIGHT_COLLAPSED : WINDOW_HEIGHT_EXPANDED;
+
+    hwnd_ = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        L"DesktopCalendar2024",
+        L"桌面日历",
+        WS_POPUP | WS_VISIBLE,
+        200, 200,
+        WINDOW_WIDTH, height,
+        NULL, NULL, hInstance, this
+    );
+
+    if (!hwnd_) return false;
+
+    SetLayeredWindowAttributes(hwnd_, 0, 230, LWA_ALPHA);
+
+    LoadData();
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    int month = st.wMonth;
+    if (month >= 3 && month <= 5) themeIndex_ = 0;
+    else if (month >= 6 && month <= 8) themeIndex_ = 1;
+    else if (month >= 9 && month <= 11) themeIndex_ = 2;
+    else themeIndex_ = 3;
+
+    return true;
+}
+
+void CalendarWindow::Show(int nCmdShow) {
+    ShowWindow(hwnd_, nCmdShow);
+    UpdateWindow(hwnd_);
+}
+
+static void RoundRect(HDC hdc, int x1, int y1, int x2, int y2, int r) {
+    int d = r * 2;
+    BeginPath(hdc);
+    MoveToEx(hdc, x1 + r, y1, NULL);
+    LineTo(hdc, x2 - r, y1);
+    Arc(hdc, x2 - d, y1, x2, y1 + d, x2, y1, x2, y1 + r);
+    LineTo(hdc, x2, y2 - r);
+    Arc(hdc, x2 - d, y2 - d, x2, y2, x2, y2, x2 - r, y2);
+    LineTo(hdc, x1 + r, y2);
+    Arc(hdc, x1, y2 - d, x1 + d, y2, x1, y2, x1, y2 - r);
+    LineTo(hdc, x1, y1 + r);
+    Arc(hdc, x1, y1, x1 + d, y1 + d, x1, y1 + r, x1 + r, y1);
+    EndPath(hdc);
+}
+
+static void FillRound(HDC hdc, int x1, int y1, int x2, int y2, int r, COLORREF color) {
+    HBRUSH br = CreateSolidBrush(color);
+    HBRUSH old = (HBRUSH)SelectObject(hdc, br);
+    RoundRect(hdc, x1, y1, x2, y2, r);
+    FillPath(hdc);
+    SelectObject(hdc, old);
+    DeleteObject(br);
+}
+
+void CalendarWindow::OnPaint() {
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hwnd_, &ps);
+
     RECT rc;
-    ::GetClientRect(hwnd_, &rc);
+    GetClientRect(hwnd_, &rc);
 
     HDC memDC = CreateCompatibleDC(hdc);
     HBITMAP memBmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
     HBITMAP oldBmp = (HBITMAP)SelectObject(memDC, memBmp);
 
-    BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    ThemeColors& theme = g_themes[themeIndex_];
 
-    PaintBackground(memDC);
-    PaintCollapseButton(memDC);
-    PaintCalendar(memDC);
+    HBRUSH bgBrush = CreateSolidBrush(theme.bgPrimary);
+    FillRect(memDC, &rc, bgBrush);
+    DeleteObject(bgBrush);
+
+    HRGN hRgn = CreateRoundRectRgn(0, 0, rc.right, rc.bottom, 28, 28);
+    HBRUSH rgnBrush = CreateSolidBrush(theme.bgPrimary);
+    FillRgn(memDC, hRgn, rgnBrush);
+    DeleteObject(rgnBrush);
+    DeleteObject(hRgn);
+
+    PaintHeader(memDC);
 
     if (!isCollapsed_) {
+        PaintCalendar(memDC);
         PaintTasks(memDC);
         PaintCountdowns(memDC);
     }
@@ -175,190 +392,254 @@ void DesktopCalendarWindow::OnPaint(HDC hdc) {
     SelectObject(memDC, oldBmp);
     DeleteObject(memBmp);
     DeleteDC(memDC);
+
+    EndPaint(hwnd_, &ps);
 }
 
-void DesktopCalendarWindow::PaintBackground(HDC hdc) {
-    RECT rc;
-    ::GetClientRect(hwnd_, &rc);
+void CalendarWindow::PaintHeader(HDC hdc) {
+    ThemeColors& theme = g_themes[themeIndex_];
 
-    HBRUSH hBrush = CreateSolidBrush(currentTheme_.bgPrimary);
-    FillRect(hdc, &rc, hBrush);
-    DeleteObject(hBrush);
+    RECT titleRect = {40, 10, WINDOW_WIDTH - 40, 40};
+    HFONT titleFont = CreateFont(-16, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
 
-    HRGN hRgn = CreateRoundRectRgn(0, 0, rc.right, rc.bottom, 24, 24);
-    FillRgn(hdc, hRgn, (HBRUSH)CreateSolidBrush(currentTheme_.bgPrimary));
-    DeleteObject(hRgn);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, theme.textPrimary);
+    HFONT oldFont = (HFONT)SelectObject(hdc, titleFont);
+    DrawText(hdc, L"✨ 每日任务", -1, &titleRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+    DeleteObject(titleFont);
+
+    RECT btnRect = {10, 10, 34, 34};
+    HFONT btnFont = CreateFont(-18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    oldFont = (HFONT)SelectObject(hdc, btnFont);
+    SetTextColor(hdc, theme.accentDark);
+    DrawText(hdc, isCollapsed_ ? L"≡" : L"≡", -1, &btnRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+    DeleteObject(btnFont);
 }
 
-void DesktopCalendarWindow::PaintCollapseButton(HDC hdc) {
-    const wchar_t* symbol = isCollapsed_ ? L"≡" : L"≡";
-    RECT rc = {8, 12, 32, 36};
-
-    HFONT font = utils::CreateFontSimple(18, FW_BOLD, L"Microsoft YaHei UI");
-    utils::DrawTextCentered(hdc, symbol, rc, currentTheme_.accentDark, font);
-    DeleteObject(font);
-}
-
-void DesktopCalendarWindow::PaintCalendar(HDC hdc) {
+void CalendarWindow::PaintCalendar(HDC hdc) {
+    ThemeColors& theme = g_themes[themeIndex_];
     SYSTEMTIME st;
     GetLocalTime(&st);
 
-    int top = HEADER_HEIGHT;
-    int bottom = top + CALENDAR_HEIGHT;
+    int top = 50;
 
-    RECT titleRect = {0, top - 10, WINDOW_WIDTH, top + 10};
-    HFONT titleFont = utils::CreateFontSimple(14, FW_MEDIUM, L"Microsoft YaHei UI");
-    utils::DrawTextCentered(hdc, L"✨ 每日任务", titleRect, currentTheme_.textPrimary, titleFont);
-    DeleteObject(titleFont);
+    std::wstring dayStr = std::to_wstring(st.wDay);
+    RECT dayRect = {30, top, 110, top + 60};
+    HFONT dayFont = CreateFont(-56, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, theme.textPrimary);
+    HFONT oldFont = (HFONT)SelectObject(hdc, dayFont);
+    DrawText(hdc, dayStr.c_str(), -1, &dayRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+    DeleteObject(dayFont);
 
-    if (!isCollapsed_) {
-        std::wstring dayStr = utils::IntToWStr(st.wDay);
-        RECT dayRect = {40, top + 20, 110, top + 80};
-        HFONT dayFont = utils::CreateFontSimple(56, FW_LIGHT, L"Microsoft YaHei UI");
-        utils::DrawTextCentered(hdc, dayStr, dayRect, currentTheme_.textPrimary, dayFont);
-        DeleteObject(dayFont);
+    std::wstring weekday = GetWeekdayName();
+    std::wstring monthStr = std::to_wstring(st.wYear) + L"年" + std::to_wstring(st.wMonth) + L"月";
 
-        std::wstring weekdayName = GetWeekdayName();
-        std::wstring monthStr = utils::IntToWStr(st.wYear) + L"年" + utils::IntToWStr(st.wMonth) + L"月";
+    RECT weekRect = {115, top + 5, 220, top + 30};
+    HFONT weekFont = CreateFont(-14, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    oldFont = (HFONT)SelectObject(hdc, weekFont);
+    SetTextColor(hdc, theme.textSecondary);
+    DrawText(hdc, weekday.c_str(), -1, &weekRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+    DeleteObject(weekFont);
 
-        RECT infoRect = {115, top + 25, 220, top + 50};
-        HFONT weekFont = utils::CreateFontSimple(14, FW_MEDIUM, L"Microsoft YaHei UI");
-        utils::DrawTextLeft(hdc, weekdayName, infoRect, currentTheme_.textSecondary, weekFont);
-        DeleteObject(weekFont);
-
-        RECT monthRect = {115, top + 50, 220, top + 75};
-        HFONT monthFont = utils::CreateFontSimple(11, FW_NORMAL, L"Microsoft YaHei UI");
-        utils::DrawTextLeft(hdc, monthStr, monthRect, currentTheme_.accent, monthFont);
-        DeleteObject(monthFont);
-
-        std::wstring lunar = GetLunarDate();
-        RECT lunarRect = {80, top + 85, 200, top + 105};
-        HFONT lunarFont = utils::CreateFontSimple(11, FW_NORMAL, L"Microsoft YaHei UI");
-        utils::DrawTextCentered(hdc, lunar, lunarRect, currentTheme_.accentDark, lunarFont);
-        DeleteObject(lunarFont);
-    }
+    RECT monthRect = {115, top + 28, 220, top + 50};
+    HFONT monthFont = CreateFont(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    oldFont = (HFONT)SelectObject(hdc, monthFont);
+    SetTextColor(hdc, theme.accent);
+    DrawText(hdc, monthStr.c_str(), -1, &monthRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+    DeleteObject(monthFont);
 }
 
-void DesktopCalendarWindow::PaintTasks(HDC hdc) {
-    int y = HEADER_HEIGHT + CALENDAR_HEIGHT + 10;
+void CalendarWindow::PaintTasks(HDC hdc) {
+    ThemeColors& theme = g_themes[themeIndex_];
+    int y = 180;
 
     RECT headerRect = {20, y, WINDOW_WIDTH - 20, y + 24};
-    HFONT sectionFont = utils::CreateFontSimple(12, FW_MEDIUM, L"Microsoft YaHei UI");
-    utils::DrawTextLeft(hdc, L"📝 今日任务", headerRect, currentTheme_.textPrimary, sectionFont);
+    HFONT sectionFont = CreateFont(-13, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, theme.textPrimary);
+    HFONT oldFont = (HFONT)SelectObject(hdc, sectionFont);
+    DrawText(hdc, L"📝 今日任务", -1, &headerRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
     DeleteObject(sectionFont);
 
     RECT addRect = {WINDOW_WIDTH - 44, y, WINDOW_WIDTH - 20, y + 24};
-    HFONT addFont = utils::CreateFontSimple(18, FW_NORMAL, L"Microsoft YaHei UI");
-    utils::DrawTextCentered(hdc, L"+", addRect, currentTheme_.accentDark, addFont);
+    HFONT addFont = CreateFont(-20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    oldFont = (HFONT)SelectObject(hdc, addFont);
+    SetTextColor(hdc, theme.accentDark);
+    DrawText(hdc, L"+", -1, &addRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
     DeleteObject(addFont);
 
     y += 30;
 
     if (tasks_.empty()) {
         RECT emptyRect = {20, y, WINDOW_WIDTH - 20, y + 40};
-        HFONT emptyFont = utils::CreateFontSimple(11, FW_NORMAL, L"Microsoft YaHei UI");
-        utils::DrawTextCentered(hdc, L"还没有任务，点击右上角 + 添加", emptyRect, RGB(180, 180, 180), emptyFont);
+        HFONT emptyFont = CreateFont(-11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+        oldFont = (HFONT)SelectObject(hdc, emptyFont);
+        SetTextColor(hdc, RGB(180, 180, 180));
+        DrawText(hdc, L"还没有任务，点击右上角 + 添加", -1, &emptyRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(hdc, oldFont);
         DeleteObject(emptyFont);
-        y += 50;
     } else {
-        HFONT taskFont = utils::CreateFontSimple(12, FW_NORMAL, L"Microsoft YaHei UI");
-        int i = 0;
-        for (const auto& task : tasks_) {
-            if (i >= 4) break;
+        HFONT taskFont = CreateFont(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
 
-            int itemY = y + i * 36;
-            RECT itemRect = {20, itemY, WINDOW_WIDTH - 20, itemY + 32};
+        for (size_t i = 0; i < tasks_.size() && i < 4; i++) {
+            const Task& t = tasks_[i];
+            int itemY = y + (int)i * 36;
 
-            COLORREF bg = task.completed ? RGB(220, 220, 220) : RGB(255, 255, 255);
-            utils::FillRoundRect(hdc, itemRect.left, itemRect.top, itemRect.right, itemRect.bottom, 8, bg);
+            FillRound(hdc, 20, itemY, WINDOW_WIDTH - 20, itemY + 32, 8,
+                t.completed ? RGB(235, 235, 235) : RGB(255, 255, 255));
 
-            RECT checkRect = {28, itemY + 6, 48, itemY + 26};
-            if (task.completed) {
-                HBRUSH hBrush = CreateSolidBrush(currentTheme_.accent);
-                FillRect(hdc, &checkRect, hBrush);
-                DeleteObject(hBrush);
-
-                HFONT checkFont = utils::CreateFontSimple(14, FW_BOLD, L"Microsoft YaHei UI");
-                utils::DrawTextCentered(hdc, L"✓", checkRect, RGB(255,255,255), checkFont);
-                DeleteObject(checkFont);
+            if (t.completed) {
+                HBRUSH br = CreateSolidBrush(theme.accent);
+                RECT cr = {28, itemY + 6, 48, itemY + 26};
+                FillRect(hdc, &cr, br);
+                DeleteObject(br);
+                oldFont = (HFONT)SelectObject(hdc, taskFont);
+                SetTextColor(hdc, RGB(255,255,255));
+                RECT tr = {28, itemY + 6, 48, itemY + 26};
+                DrawText(hdc, L"✓", -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                SelectObject(hdc, oldFont);
             } else {
-                RECT frameRect = {checkRect.left + 2, checkRect.top + 2, checkRect.right - 2, checkRect.bottom - 2};
-                HBRUSH hBrush = CreateSolidBrush(RGB(255,255,255));
-                HPEN hPen = CreatePen(PS_SOLID, 2, currentTheme_.accent);
-                HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, hBrush);
-                HPEN oldPen = (HPEN)SelectObject(hdc, hPen);
-                Rectangle(hdc, frameRect.left, frameRect.top, frameRect.right, frameRect.bottom);
-                SelectObject(hdc, oldBrush);
+                HBRUSH br = CreateSolidBrush(RGB(255,255,255));
+                HPEN pen = CreatePen(PS_SOLID, 2, theme.accent);
+                HBRUSH oldBr = (HBRUSH)SelectObject(hdc, br);
+                HPEN oldPen = (HPEN)SelectObject(hdc, pen);
+                Rectangle(hdc, 30, itemY + 8, 46, itemY + 24);
+                SelectObject(hdc, oldBr);
                 SelectObject(hdc, oldPen);
-                DeleteObject(hBrush);
-                DeleteObject(hPen);
+                DeleteObject(br);
+                DeleteObject(pen);
             }
 
+            oldFont = (HFONT)SelectObject(hdc, taskFont);
+            SetTextColor(hdc, t.completed ? RGB(170, 170, 170) : theme.textPrimary);
             RECT textRect = {58, itemY + 4, WINDOW_WIDTH - 60, itemY + 28};
-            COLORREF textColor = task.completed ? RGB(160, 160, 160) : currentTheme_.textPrimary;
-            utils::DrawTextLeft(hdc, task.text, textRect, textColor, taskFont);
-
-            i++;
+            DrawText(hdc, t.text.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            SelectObject(hdc, oldFont);
         }
         DeleteObject(taskFont);
-        y += std::min((int)tasks_.size(), 4) * 36 + 10;
     }
 }
 
-void DesktopCalendarWindow::PaintCountdowns(HDC hdc) {
-    int y = HEADER_HEIGHT + CALENDAR_HEIGHT + 180;
-    if (tasks_.empty()) y = HEADER_HEIGHT + CALENDAR_HEIGHT + 140;
+void CalendarWindow::PaintCountdowns(HDC hdc) {
+    ThemeColors& theme = g_themes[themeIndex_];
+
+    int y = 350;
+    if (tasks_.empty()) y = 290;
 
     RECT headerRect = {20, y, WINDOW_WIDTH - 20, y + 24};
-    HFONT sectionFont = utils::CreateFontSimple(12, FW_MEDIUM, L"Microsoft YaHei UI");
-    utils::DrawTextLeft(hdc, L"⏰ 倒计时", headerRect, currentTheme_.textPrimary, sectionFont);
+    HFONT sectionFont = CreateFont(-13, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, theme.textPrimary);
+    HFONT oldFont = (HFONT)SelectObject(hdc, sectionFont);
+    DrawText(hdc, L"⏰ 倒计时", -1, &headerRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
     DeleteObject(sectionFont);
 
     RECT addRect = {WINDOW_WIDTH - 44, y, WINDOW_WIDTH - 20, y + 24};
-    HFONT addFont = utils::CreateFontSimple(18, FW_NORMAL, L"Microsoft YaHei UI");
-    utils::DrawTextCentered(hdc, L"+", addRect, currentTheme_.accentDark, addFont);
+    HFONT addFont = CreateFont(-20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    oldFont = (HFONT)SelectObject(hdc, addFont);
+    SetTextColor(hdc, theme.accentDark);
+    DrawText(hdc, L"+", -1, &addRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
     DeleteObject(addFont);
 
     y += 30;
 
     if (countdowns_.empty()) {
         RECT emptyRect = {20, y, WINDOW_WIDTH - 20, y + 40};
-        HFONT emptyFont = utils::CreateFontSimple(11, FW_NORMAL, L"Microsoft YaHei UI");
-        utils::DrawTextCentered(hdc, L"还没有倒计时，点击右上角 + 添加", emptyRect, RGB(180, 180, 180), emptyFont);
+        HFONT emptyFont = CreateFont(-11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+        oldFont = (HFONT)SelectObject(hdc, emptyFont);
+        SetTextColor(hdc, RGB(180, 180, 180));
+        DrawText(hdc, L"还没有倒计时，点击右上角 + 添加", -1, &emptyRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(hdc, oldFont);
         DeleteObject(emptyFont);
     } else {
-        HFONT nameFont = utils::CreateFontSimple(13, FW_MEDIUM, L"Microsoft YaHei UI");
-        HFONT dateFont = utils::CreateFontSimple(10, FW_NORMAL, L"Microsoft YaHei UI");
-        HFONT numFont = utils::CreateFontSimple(22, FW_LIGHT, L"Microsoft YaHei UI");
-        HFONT unitFont = utils::CreateFontSimple(9, FW_NORMAL, L"Microsoft YaHei UI");
+        HFONT nameFont = CreateFont(-13, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+        HFONT dateFont = CreateFont(-10, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+        HFONT numFont = CreateFont(-22, 0, 0, 0, FW_LIGHT, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+        HFONT unitFont = CreateFont(-9, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
 
-        int i = 0;
-        for (const auto& cd : countdowns_) {
-            if (i >= 3) break;
+        for (size_t i = 0; i < countdowns_.size() && i < 3; i++) {
+            const Countdown& c = countdowns_[i];
+            int itemY = y + (int)i * 44;
 
-            int itemY = y + i * 44;
-            RECT itemRect = {20, itemY, WINDOW_WIDTH - 20, itemY + 40};
-            utils::FillRoundRect(hdc, itemRect.left, itemRect.top, itemRect.right, itemRect.bottom, 10, currentTheme_.bgSecondary);
+            FillRound(hdc, 20, itemY, WINDOW_WIDTH - 20, itemY + 40, 10, theme.bgSecondary);
 
             RECT iconRect = {28, itemY + 6, 60, itemY + 34};
-            utils::DrawTextCentered(hdc, L"⏰", iconRect, currentTheme_.accentDark, nameFont);
+            oldFont = (HFONT)SelectObject(hdc, nameFont);
+            SetTextColor(hdc, theme.accentDark);
+            DrawText(hdc, L"⏰", -1, &iconRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
             RECT nameRect = {68, itemY + 4, 200, itemY + 20};
-            utils::DrawTextLeft(hdc, cd.name, nameRect, currentTheme_.textPrimary, nameFont);
+            SetTextColor(hdc, theme.textPrimary);
+            DrawText(hdc, c.name.c_str(), -1, &nameRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+            size_t dot = c.targetDate.find(L'-');
+            size_t dot2 = c.targetDate.find(L'-', dot + 1);
+            std::wstring month = c.targetDate.substr(dot + 1, dot2 - dot - 1);
+            std::wstring day = c.targetDate.substr(dot2 + 1);
+            std::wstring dateStr = month + L"月" + day + L"日";
 
             RECT dateRect = {68, itemY + 20, 200, itemY + 34};
-            std::wstring dateStr = utils::FormatDateMD(cd.targetDate);
-            utils::DrawTextLeft(hdc, dateStr, dateRect, RGB(150, 150, 150), dateFont);
+            oldFont = (HFONT)SelectObject(hdc, dateFont);
+            SetTextColor(hdc, RGB(150, 150, 150));
+            DrawText(hdc, dateStr.c_str(), -1, &dateRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-            int days = CalculateDaysLeft(cd.targetDate);
+            int days = CalculateDaysLeft(c.targetDate);
+            std::wstring daysStr = std::to_wstring(days);
+
             RECT numRect = {WINDOW_WIDTH - 80, itemY + 2, WINDOW_WIDTH - 40, itemY + 28};
-            utils::DrawTextCentered(hdc, utils::IntToWStr(days), numRect, currentTheme_.accentDark, numFont);
+            oldFont = (HFONT)SelectObject(hdc, numFont);
+            SetTextColor(hdc, theme.accentDark);
+            DrawText(hdc, daysStr.c_str(), -1, &numRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
             RECT unitRect = {WINDOW_WIDTH - 80, itemY + 26, WINDOW_WIDTH - 40, itemY + 38};
-            utils::DrawTextCentered(hdc, L"天", unitRect, currentTheme_.accent, unitFont);
-
-            i++;
+            oldFont = (HFONT)SelectObject(hdc, unitFont);
+            SetTextColor(hdc, theme.accent);
+            DrawText(hdc, L"天", -1, &unitRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
+
+        SelectObject(hdc, oldFont);
         DeleteObject(nameFont);
         DeleteObject(dateFont);
         DeleteObject(numFont);
@@ -366,20 +647,31 @@ void DesktopCalendarWindow::PaintCountdowns(HDC hdc) {
     }
 }
 
-void DesktopCalendarWindow::PaintFooter(HDC hdc) {
+void CalendarWindow::PaintFooter(HDC hdc) {
+    ThemeColors& theme = g_themes[themeIndex_];
     int bottom = isCollapsed_ ? WINDOW_HEIGHT_COLLAPSED : WINDOW_HEIGHT_EXPANDED;
 
-    RECT footerRect = {0, bottom - FOOTER_HEIGHT, WINDOW_WIDTH, bottom};
-    HFONT footerFont = utils::CreateFontSimple(10, FW_NORMAL, L"Microsoft YaHei UI");
+    RECT footerRect = {0, bottom - 36, WINDOW_WIDTH, bottom};
+    HFONT footerFont = CreateFont(-10, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
 
-    std::wstring footerText = L"━━━ " + currentTheme_.seasonText + L" ━━━";
-    utils::DrawTextCentered(hdc, footerText, footerRect, currentTheme_.accent, footerFont);
-
+    std::wstring text = L"━━━ " + theme.seasonText + L" ━━━";
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, theme.accent);
+    HFONT oldFont = (HFONT)SelectObject(hdc, footerFont);
+    DrawText(hdc, text.c_str(), -1, &footerRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
     DeleteObject(footerFont);
 }
 
-void DesktopCalendarWindow::OnLButtonDown(int x, int y) {
-    if (y < HEADER_HEIGHT) {
+void CalendarWindow::OnLButtonDown(int x, int y) {
+    if (x >= 10 && x <= 34 && y >= 10 && y <= 34) {
+        ToggleCollapse();
+        return;
+    }
+
+    if (y < 45) {
         isDragging_ = true;
         POINT pt;
         GetCursorPos(&pt);
@@ -388,29 +680,33 @@ void DesktopCalendarWindow::OnLButtonDown(int x, int y) {
         dragOffset_.x = pt.x - rc.left;
         dragOffset_.y = pt.y - rc.top;
         SetCapture(hwnd_);
+        return;
     }
 
     if (!isCollapsed_) {
-        int taskY = HEADER_HEIGHT + CALENDAR_HEIGHT + 10;
-        int addBtnY = taskY;
-        if (x >= WINDOW_WIDTH - 44 && x <= WINDOW_WIDTH - 20 &&
-            y >= addBtnY && y <= addBtnY + 24) {
-            ShowAddTaskDialog();
-            return;
+        if (x >= WINDOW_WIDTH - 44 && x <= WINDOW_WIDTH - 20) {
+            if (y >= 180 && y <= 204) {
+                std::wstring text;
+                if (ShowInputDialog(L"添加任务", L"请输入任务内容：", text) && !text.empty()) {
+                    AddTask(text);
+                }
+                return;
+            }
+
+            int cy = tasks_.empty() ? 290 : 350;
+            if (y >= cy && y <= cy + 24) {
+                std::wstring name = L"中考";
+                std::wstring date = L"2025-06-20";
+                if (ShowAddCountdownDialog(name, date)) {
+                    AddCountdown(name, date);
+                }
+                return;
+            }
         }
 
-        int cdY = HEADER_HEIGHT + CALENDAR_HEIGHT + 180;
-        if (tasks_.empty()) cdY = HEADER_HEIGHT + CALENDAR_HEIGHT + 140;
-        int cdAddBtnY = cdY;
-        if (x >= WINDOW_WIDTH - 44 && x <= WINDOW_WIDTH - 20 &&
-            y >= cdAddBtnY && y <= cdAddBtnY + 24) {
-            ShowAddCountdownDialog();
-            return;
-        }
-
-        int taskListY = taskY + 30;
+        int taskY = 210;
         for (size_t i = 0; i < tasks_.size() && i < 4; i++) {
-            int itemY = taskListY + (int)i * 36;
+            int itemY = taskY + (int)i * 36;
             if (y >= itemY && y <= itemY + 32) {
                 if (x >= 28 && x <= 48) {
                     ToggleTask(tasks_[i].id);
@@ -421,54 +717,43 @@ void DesktopCalendarWindow::OnLButtonDown(int x, int y) {
     }
 }
 
-void DesktopCalendarWindow::OnLButtonUp(int x, int y) {
+void CalendarWindow::OnLButtonUp() {
     if (isDragging_) {
         isDragging_ = false;
         ReleaseCapture();
     }
 }
 
-void DesktopCalendarWindow::OnMouseMove(int x, int y) {
+void CalendarWindow::OnMouseMove(int x, int y) {
     if (isDragging_) {
         POINT pt;
         GetCursorPos(&pt);
         SetWindowPos(hwnd_, NULL,
-            pt.x - dragOffset_.x,
-            pt.y - dragOffset_.y,
-            0, 0,
-            SWP_NOSIZE | SWP_NOZORDER);
+            pt.x - dragOffset_.x, pt.y - dragOffset_.y,
+            0, 0, SWP_NOSIZE | SWP_NOZORDER);
     }
 }
 
-void DesktopCalendarWindow::OnRButtonUp(int x, int y) {
+void CalendarWindow::OnRButtonUp(int x, int y) {
     POINT pt;
     GetCursorPos(&pt);
 
     HMENU hMenu = CreatePopupMenu();
-    AppendMenuW(hMenu, MF_STRING, ID_TOGGLE_COLLAPSE, isCollapsed_ ? L"展开" : L"折叠");
-    AppendMenuW(hMenu, MF_STRING, ID_NEXT_THEME, L"切换主题");
-    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(hMenu, MF_STRING, ID_EXIT, L"退出");
+    AppendMenu(hMenu, MF_STRING, 1, isCollapsed_ ? L"展开" : L"折叠");
+    AppendMenu(hMenu, MF_STRING, 2, L"切换主题");
+    AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hMenu, MF_STRING, 3, L"退出");
 
-    TrackPopupMenu(hMenu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd_, NULL);
+    int cmd = TrackPopupMenu(hMenu, TPM_RIGHTBUTTON | TPM_RETURNCMD, pt.x, pt.y, 0, hwnd_, NULL);
+
+    if (cmd == 1) ToggleCollapse();
+    else if (cmd == 2) NextTheme();
+    else if (cmd == 3) DestroyWindow(hwnd_);
+
     DestroyMenu(hMenu);
 }
 
-void DesktopCalendarWindow::OnCommand(int id, HWND hCtl, UINT codeNotify) {
-    switch (id) {
-        case ID_TOGGLE_COLLAPSE:
-            ToggleCollapse();
-            break;
-        case ID_NEXT_THEME:
-            NextTheme();
-            break;
-        case ID_EXIT:
-            DestroyWindow(hwnd_);
-            break;
-    }
-}
-
-void DesktopCalendarWindow::ToggleCollapse() {
+void CalendarWindow::ToggleCollapse() {
     isCollapsed_ = !isCollapsed_;
     int height = isCollapsed_ ? WINDOW_HEIGHT_COLLAPSED : WINDOW_HEIGHT_EXPANDED;
     SetWindowPos(hwnd_, NULL, 0, 0, WINDOW_WIDTH, height, SWP_NOMOVE | SWP_NOZORDER);
@@ -476,109 +761,58 @@ void DesktopCalendarWindow::ToggleCollapse() {
     SaveData();
 }
 
-void DesktopCalendarWindow::NextTheme() {
-    themeIndex_ = (themeIndex_ + 1) % themes::GetThemeCount();
-    currentTheme_ = themes::GetThemeByIndex(themeIndex_);
-    SetLayeredWindowAttributes(hwnd_, 0, currentTheme_.alpha, LWA_ALPHA);
+void CalendarWindow::NextTheme() {
+    themeIndex_ = (themeIndex_ + 1) % 4;
     InvalidateRect(hwnd_, NULL, TRUE);
     SaveData();
 }
 
-void DesktopCalendarWindow::UpdateSeason() {
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    int month = st.wMonth;
-
-    if (month >= 3 && month <= 5) {
-        currentTheme_ = themes::GetSpringTheme();
-        themeIndex_ = 0;
-    } else if (month >= 6 && month <= 8) {
-        currentTheme_ = themes::GetSummerTheme();
-        themeIndex_ = 1;
-    } else if (month >= 9 && month <= 11) {
-        currentTheme_ = themes::GetAutumnTheme();
-        themeIndex_ = 2;
-    } else {
-        currentTheme_ = themes::GetWinterTheme();
-        themeIndex_ = 3;
-    }
-}
-
-Season DesktopCalendarWindow::GetCurrentSeason() {
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    int month = st.wMonth;
-    if (month >= 3 && month <= 5) return Season::Spring;
-    if (month >= 6 && month <= 8) return Season::Summer;
-    if (month >= 9 && month <= 11) return Season::Autumn;
-    return Season::Winter;
-}
-
-std::wstring DesktopCalendarWindow::GetWeekdayName() {
+std::wstring CalendarWindow::GetWeekdayName() {
     SYSTEMTIME st;
     GetLocalTime(&st);
     const wchar_t* days[] = {L"星期日", L"星期一", L"星期二", L"星期三", L"星期四", L"星期五", L"星期六"};
     return days[st.wDayOfWeek];
 }
 
-std::wstring DesktopCalendarWindow::GetLunarDate() {
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    const wchar_t* lunarMonths[] = {L"正", L"二", L"三", L"四", L"五", L"六", L"七", L"八", L"九", L"十", L"冬", L"腊"};
-    const wchar_t* lunarDays[] = {
-        L"初一", L"初二", L"初三", L"初四", L"初五", L"初六", L"初七", L"初八", L"初九", L"初十",
-        L"十一", L"十二", L"十三", L"十四", L"十五", L"十六", L"十七", L"十八", L"十九", L"二十",
-        L"廿一", L"廿二", L"廿三", L"廿四", L"廿五", L"廿六", L"廿七", L"廿八", L"廿九", L"三十"
-    };
-
-    int lunarDay = (st.wDay + 10) % 30;
-    if (lunarDay == 0) lunarDay = 30;
-    int lunarMonth = (st.wMonth + 10) % 12;
-
-    return std::wstring(L"农历") + lunarMonths[lunarMonth] + L"月" + lunarDays[lunarDay - 1];
-}
-
-int DesktopCalendarWindow::CalculateDaysLeft(const std::wstring& targetDate) {
+int CalendarWindow::CalculateDaysLeft(const std::wstring& targetDate) {
     if (targetDate.size() < 10) return 0;
 
-    int year = utils::WStrToInt(targetDate.substr(0, 4));
-    int month = utils::WStrToInt(targetDate.substr(5, 2));
-    int day = utils::WStrToInt(targetDate.substr(8, 2));
+    int year = _wtoi(targetDate.substr(0, 4).c_str());
+    int month = _wtoi(targetDate.substr(5, 2).c_str());
+    int day = _wtoi(targetDate.substr(8, 2).c_str());
 
     SYSTEMTIME st;
     GetLocalTime(&st);
 
-    struct tm now_tm = {0};
-    now_tm.tm_year = st.wYear - 1900;
-    now_tm.tm_mon = st.wMonth - 1;
-    now_tm.tm_mday = st.wDay;
+    FILETIME ftNow, ftTarget;
+    SystemTimeToFileTime(&st, &ftNow);
 
-    struct tm target_tm = {0};
-    target_tm.tm_year = year - 1900;
-    target_tm.tm_mon = month - 1;
-    target_tm.tm_mday = day;
+    SYSTEMTIME tst = {0};
+    tst.wYear = (WORD)year;
+    tst.wMonth = (WORD)month;
+    tst.wDay = (WORD)day;
+    SystemTimeToFileTime(&tst, &ftTarget);
 
-    time_t now = mktime(&now_tm);
-    time_t target = mktime(&target_tm);
+    ULONGLONG now = ((ULONGLONG)ftNow.dwHighDateTime << 32) | ftNow.dwLowDateTime;
+    ULONGLONG target = ((ULONGLONG)ftTarget.dwHighDateTime << 32) | ftTarget.dwLowDateTime;
 
-    double diff = difftime(target, now);
-    int days = (int)(diff / (60 * 60 * 24)) + 1;
+    LONGLONG diff = (LONGLONG)(target - now);
+    int days = (int)(diff / (10000000LL * 60 * 60 * 24));
     return days > 0 ? days : 0;
 }
 
-void DesktopCalendarWindow::AddTask(const std::wstring& text) {
+void CalendarWindow::AddTask(const std::wstring& text) {
     if (text.empty()) return;
     Task t;
-    t.id = (int)time(NULL);
+    t.id = (int)GetTickCount64();
     t.text = text;
     t.completed = false;
-    t.createdAt = utils::GetCurrentDateStr();
     tasks_.push_back(t);
     SaveData();
     InvalidateRect(hwnd_, NULL, TRUE);
 }
 
-void DesktopCalendarWindow::ToggleTask(int id) {
+void CalendarWindow::ToggleTask(int id) {
     for (auto& t : tasks_) {
         if (t.id == id) {
             t.completed = !t.completed;
@@ -589,33 +823,18 @@ void DesktopCalendarWindow::ToggleTask(int id) {
     InvalidateRect(hwnd_, NULL, TRUE);
 }
 
-void DesktopCalendarWindow::DeleteTask(int id) {
-    tasks_.erase(std::remove_if(tasks_.begin(), tasks_.end(),
-        [id](const Task& t) { return t.id == id; }), tasks_.end());
-    SaveData();
-    InvalidateRect(hwnd_, NULL, TRUE);
-}
-
-void DesktopCalendarWindow::AddCountdown(const std::wstring& name, const std::wstring& targetDate) {
+void CalendarWindow::AddCountdown(const std::wstring& name, const std::wstring& targetDate) {
     if (name.empty() || targetDate.empty()) return;
     Countdown c;
-    c.id = (int)time(NULL) + rand();
+    c.id = (int)GetTickCount64() + rand();
     c.name = name;
     c.targetDate = targetDate;
-    c.createdAt = utils::GetCurrentDateStr();
     countdowns_.push_back(c);
     SaveData();
     InvalidateRect(hwnd_, NULL, TRUE);
 }
 
-void DesktopCalendarWindow::DeleteCountdown(int id) {
-    countdowns_.erase(std::remove_if(countdowns_.begin(), countdowns_.end(),
-        [id](const Countdown& c) { return c.id == id; }), countdowns_.end());
-    SaveData();
-    InvalidateRect(hwnd_, NULL, TRUE);
-}
-
-std::wstring DesktopCalendarWindow::GetDataFilePath() {
+std::wstring CalendarWindow::GetDataFilePath() {
     wchar_t path[MAX_PATH];
     GetModuleFileNameW(hInstance_, path, MAX_PATH);
     std::wstring dir(path);
@@ -626,16 +845,31 @@ std::wstring DesktopCalendarWindow::GetDataFilePath() {
     return dir + L"data.txt";
 }
 
-void DesktopCalendarWindow::LoadData() {
+static std::string WtoU8(const std::wstring& w) {
+    if (w.empty()) return "";
+    int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, NULL, 0, NULL, NULL);
+    std::string r(len, 0);
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &r[0], len, NULL, NULL);
+    return r;
+}
+
+static std::wstring U8toW(const std::string& s) {
+    if (s.empty()) return L"";
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, NULL, 0);
+    std::wstring r(len, 0);
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &r[0], len);
+    return r;
+}
+
+void CalendarWindow::LoadData() {
     std::wstring path = GetDataFilePath();
-    std::ifstream file(utils::WideToUtf8(path));
+    std::ifstream file(WtoU8(path));
     if (!file.is_open()) return;
 
-    std::string line;
-    std::string section;
-
+    std::string line, section;
     while (std::getline(file, line)) {
         if (line.empty()) continue;
+        if (line.back() == '\r') line.pop_back();
         if (line[0] == '[') {
             section = line.substr(1, line.size() - 2);
             continue;
@@ -643,50 +877,42 @@ void DesktopCalendarWindow::LoadData() {
 
         if (section == "Settings") {
             size_t eq = line.find('=');
-            if (eq != std::string::npos) {
-                std::string key = line.substr(0, eq);
-                std::string value = line.substr(eq + 1);
-                if (key == "theme") {
-                    themeIndex_ = atoi(value.c_str()) % themes::GetThemeCount();
-                    currentTheme_ = themes::GetThemeByIndex(themeIndex_);
-                    SetLayeredWindowAttributes(hwnd_, 0, currentTheme_.alpha, LWA_ALPHA);
-                } else if (key == "collapsed") {
-                    isCollapsed_ = (value == "1");
-                }
+            if (eq == std::string::npos) continue;
+            std::string key = line.substr(0, eq);
+            std::string val = line.substr(eq + 1);
+            if (key == "theme") {
+                themeIndex_ = atoi(val.c_str()) % 4;
+            } else if (key == "collapsed") {
+                isCollapsed_ = (val == "1");
             }
         } else if (section == "Tasks") {
-            size_t pos1 = line.find('|');
-            if (pos1 != std::string::npos) {
-                size_t pos2 = line.find('|', pos1 + 1);
-                if (pos2 != std::string::npos) {
-                    Task t;
-                    t.id = atoi(line.substr(0, pos1).c_str());
-                    t.completed = (line.substr(pos1 + 1, pos2 - pos1 - 1) == "1");
-                    t.text = utils::Utf8ToWide(line.substr(pos2 + 1));
-                    tasks_.push_back(t);
-                }
-            }
+            size_t p1 = line.find('|');
+            if (p1 == std::string::npos) continue;
+            size_t p2 = line.find('|', p1 + 1);
+            if (p2 == std::string::npos) continue;
+            Task t;
+            t.id = atoi(line.substr(0, p1).c_str());
+            t.completed = (line.substr(p1 + 1, p2 - p1 - 1) == "1");
+            t.text = U8toW(line.substr(p2 + 1));
+            tasks_.push_back(t);
         } else if (section == "Countdowns") {
-            size_t pos1 = line.find('|');
-            if (pos1 != std::string::npos) {
-                size_t pos2 = line.find('|', pos1 + 1);
-                if (pos2 != std::string::npos) {
-                    Countdown c;
-                    c.id = atoi(line.substr(0, pos1).c_str());
-                    c.name = utils::Utf8ToWide(line.substr(pos1 + 1, pos2 - pos1 - 1));
-                    c.targetDate = utils::Utf8ToWide(line.substr(pos2 + 1));
-                    countdowns_.push_back(c);
-                }
-            }
+            size_t p1 = line.find('|');
+            if (p1 == std::string::npos) continue;
+            size_t p2 = line.find('|', p1 + 1);
+            if (p2 == std::string::npos) continue;
+            Countdown c;
+            c.id = atoi(line.substr(0, p1).c_str());
+            c.name = U8toW(line.substr(p1 + 1, p2 - p1 - 1));
+            c.targetDate = U8toW(line.substr(p2 + 1));
+            countdowns_.push_back(c);
         }
     }
-
     file.close();
 }
 
-void DesktopCalendarWindow::SaveData() {
+void CalendarWindow::SaveData() {
     std::wstring path = GetDataFilePath();
-    std::ofstream file(utils::WideToUtf8(path));
+    std::ofstream file(WtoU8(path));
     if (!file.is_open()) return;
 
     file << "[Settings]\n";
@@ -696,40 +922,15 @@ void DesktopCalendarWindow::SaveData() {
 
     file << "[Tasks]\n";
     for (const auto& t : tasks_) {
-        file << t.id << "|" << (t.completed ? "1" : "0") << "|" << utils::WideToUtf8(t.text) << "\n";
+        file << t.id << "|" << (t.completed ? "1" : "0") << "|" << WtoU8(t.text) << "\n";
     }
     file << "\n";
 
     file << "[Countdowns]\n";
     for (const auto& c : countdowns_) {
-        file << c.id << "|" << utils::WideToUtf8(c.name) << "|" << utils::WideToUtf8(c.targetDate) << "\n";
+        file << c.id << "|" << WtoU8(c.name) << "|" << WtoU8(c.targetDate) << "\n";
     }
     file << "\n";
 
     file.close();
-}
-
-void DesktopCalendarWindow::ShowAddTaskDialog() {
-    wchar_t buf[256] = {0};
-    if (utils::InputBoxW(hwnd_, L"请输入任务内容：", L"添加任务", buf, 256) > 0) {
-        AddTask(buf);
-    }
-}
-
-void DesktopCalendarWindow::ShowAddCountdownDialog() {
-    wchar_t nameBuf[128] = {0};
-    wchar_t dateBuf[32] = {0};
-
-    if (utils::InputBoxW(hwnd_, L"请输入事件名称（如：中考）：", L"添加倒计时 - 名称", nameBuf, 128) > 0) {
-        wcscpy_s(dateBuf, L"2025-06-20");
-        if (utils::InputBoxW(hwnd_, L"请输入目标日期（格式：YYYY-MM-DD）：", L"添加倒计时 - 日期", dateBuf, 32) > 0) {
-            AddCountdown(nameBuf, dateBuf);
-        }
-    }
-}
-
-RECT DesktopCalendarWindow::GetClientRect() {
-    RECT rc;
-    ::GetClientRect(hwnd_, &rc);
-    return rc;
 }

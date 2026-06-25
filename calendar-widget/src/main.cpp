@@ -2,16 +2,11 @@
 #include "window.h"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    INITCOMMONCONTROLSEX icex;
-    icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
-    icex.dwICC = ICC_STANDARD_CLASSES;
-    InitCommonControlsEx(&icex);
-
-    DesktopCalendarWindow window;
+    CalendarWindow window;
     if (!window.Create(hInstance)) {
+        MessageBox(NULL, L"创建窗口失败", L"错误", MB_ICONERROR);
         return -1;
     }
-
     window.Show(nCmdShow);
 
     MSG msg;
@@ -19,6 +14,5 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
-
     return (int)msg.wParam;
 }

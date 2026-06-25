@@ -1,0 +1,3 @@
+/workspace/calendar-widget/build-cmake/CMakeFiles/DesktopCalendar.dir
+/workspace/calendar-widget/build-cmake/CMakeFiles/edit_cache.dir
+/workspace/calendar-widget/build-cmake/CMakeFiles/rebuild_cache.dir
